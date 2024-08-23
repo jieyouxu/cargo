@@ -571,7 +571,9 @@ where
 }
 
 fn set_not_readonly(p: &Path) -> io::Result<bool> {
-    let mut perms = p.metadata()?.permissions();
+    // Note that `p` is possibly a symlink. What if this is
+    // `symlink_metadata`?
+    let mut perms = p.symlink_metadata()?.permissions();
     if !perms.readonly() {
         return Ok(false);
     }
