@@ -16,6 +16,9 @@ mod read2;
 pub mod registry;
 mod sha256;
 
+#[cfg(windows)]
+mod windows_hacks;
+
 /// Whether or not this running in a Continuous Integration environment.
 pub fn is_ci() -> bool {
     std::env::var("CI").is_ok() || std::env::var("TF_BUILD").is_ok()

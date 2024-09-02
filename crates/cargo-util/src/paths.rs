@@ -547,8 +547,62 @@ fn remove_symlink_dir_with_permission_check(p: &Path) -> Result<()> {
 }
 
 fn remove_file_with_permission_check(p: &Path) -> Result<()> {
-    remove_with_permission_check(fs::remove_file, p)
-        .with_context(|| format!("failed to remove file `{}`", p.display()))
+    if let Err(e) = remove_with_permission_check(fs::remove_file, p) {
+        eprintln!(
+            "[DEBUG] remove_file_with_permission_check: failed to `fs::remove_file` @ p=`{}`",
+            p.display()
+        );
+        // HACK(jieyouxu): let's see what's holding up. Note that this is not robost to TOCTOU
+        // races where the process was holding on to the file when calling `remove_file` but
+        // released immediately after before gathering process IDs holding the file.
+        let mut process_ids = crate::windows_hacks::process_ids_using_file(p).unwrap();
+        process_ids.dedup();
+        process_ids.sort();
+
+        if !process_ids.is_empty() {
+            eprintln!(
+                "[DEBUG] remove_file_with_permission_check: pids holding p=`{}`: {:?}",
+                p.display(),
+                process_ids
+            );
+        }
+
+        use sysinfo::{ProcessRefreshKind, RefreshKind, System};
+
+        let sys = System::new_with_specifics(
+            RefreshKind::new().with_processes(ProcessRefreshKind::everything()),
+        );
+
+        let mut holdups = vec![];
+        for (pid, process) in sys.processes() {
+            if process_ids.contains(&(pid.as_u32() as usize)) {
+                holdups.push((pid.as_u32(), process.exe().unwrap_or(Path::new(""))));
+            }
+        }
+
+        if holdups.is_empty() {
+            eprintln!(
+                "[DEBUG] remove_file_with_permission_check: did not find any process holding up p=`{}`, so how did we fail?",
+                p.display(),
+            );
+        } else {
+            eprintln!(
+                "[DEBUG] remove_file_with_permission_check: printing process names (where available) holding p=`{}`",
+                p.display()
+            );
+            for (pid, process_exe) in holdups {
+                eprintln!(
+                    "[DEBUG] remove_file_with_permission_check: process holding p=`{}`: pid={pid}, process_name={:?}",
+                    p.display(),
+                    process_exe
+                );
+            }
+        }
+
+        return Err(e).with_context(|| format!("failed to remove file `{}`", p.display()));
+    }
+
+    Ok(())
 }
 
 fn remove_with_permission_check<F, P>(remove_func: F, p: P) -> io::Result<()>
